@@ -1,0 +1,6 @@
+version: '1.0'
+
+stages:
+  - stage: HelloWorld
+    steps:
+      - echo: "Hello World from Jenkins Pipeline!"
