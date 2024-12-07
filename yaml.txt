@@ -1,6 +1,80 @@
-version: '1.0'
+pipeline {
+    agent any
+    environment {
+        APP_NAME = 'react-app'   // Replace with your app name in PM2
+        GIT_REPO = 'https://github.com/kabirbaidhya/react-todo-app.git' 
+        CHECKOUT_DIR = '/opt/checkout/react-todo-add'
+        BUILD_DIR = '/opt/deployment/react' // Path to your React app on the server
+        S3_BUCKET = 'devops-challange-reacttodo-s3deploy' // s3 bucket name 
+    }   
+    stages {
+        stage('Stop Existing Deployment') {
+            steps {
+                echo 'Stopping the currently running deployment...'
+                sh ''' 
+                    sudo -u DevOps pm2 stop all || echo "App not running"
+                '''
+            }
+        }
+        stage('Pull Fresh Code') {
+            steps {
+                echo 'Pulling the latest code from Git...'
+                sh '''
+                   sudo chown -R jenkins:jenkins /opt/checkout/ /opt/deployment/
+                   sudo rm -rf ${CHECKOUT_DIR} || true
+                   sudo git clone ${GIT_REPO} ${CHECKOUT_DIR}
+                '''
+            }
+        }
+        stage('Build Application') {
+            steps {
+                echo 'Building the React application...'
+                dir("${CHECKOUT_DIR}") {
+                    sh 'sudo npm install'
+                    sh 'sudo npm run build'
+                }
+                echo 'Moving build files to deployment directory...'
+                sh '''
+                   sudo rm -rf ${BUILD_DIR} || true 
+                   sudo mkdir -p ${BUILD_DIR}
+                   sudo cp -r ${CHECKOUT_DIR}/build/* ${BUILD_DIR}/
+                '''
+            }
+        }
+        stage('Deploy with PM2') {
+            steps {
+                echo 'Deploying the new build using PM2...'
+                dir("${BUILD_DIR}"){
+                //  sh 'pm2 start npm --name ${APP_NAME} -- start'
+                sh ''' 
+                    sudo pm2 start npx --name ${APP_NAME} -- serve -s ${BUILD_DIR}
+                    echo 'save the pm2 process list'
+                    sudo pm2 save --force
+                    echo 'autostartup react-app'
+                    sudo pm2 startup
+                '''
+                }
+            }
+        }
+      stage('Upload to S3') {
+            steps {
+                echo 'Uploading build files to S3...'
+                withAWS(credentials: 'aws-credentials-id') {  // Use your Jenkins AWS credentials ID
+                    s3Upload(
+                        bucket: "${S3_BUCKET}",
+                        file: "${BUILD_DIR}",
+                    )
+                }
+            }
+        }
 
-stages:
-  - stage: HelloWorld
-    steps:
-      - echo: "Hello World from Jenkins Pipeline!"
+    }
+        post {
+        success {
+            echo 'Deployment and S3 upload successful!'
+        }
+        failure {
+            echo 'Deployment or S3 upload failed.'
+        }
+    }
+}
